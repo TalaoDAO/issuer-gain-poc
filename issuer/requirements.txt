@@ -21,3 +21,4 @@ py-multicodec
 flask-restx
 pysodium
 pycryptodome
+Crypto 
