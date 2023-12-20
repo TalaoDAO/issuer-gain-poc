@@ -1,4 +1,3 @@
-
 redis
 Flask-Session
 Flask[async]
@@ -22,3 +21,4 @@ flask-restx
 pysodium
 pycryptodome
 Crypto 
+qrcode[pil]

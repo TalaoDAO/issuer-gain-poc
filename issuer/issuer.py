@@ -1,5 +1,5 @@
 import base64
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, send_file
 import socket
 from jwcrypto import jwk, jwt
 import requests
@@ -9,18 +9,51 @@ import redis
 import sys
 import logging
 from datetime import datetime
+import qrcode
+
 
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 
-red = redis.Redis(host='localhost', port=6379, db=0)
+# red = redis.Redis(host='localhost', port=6379, db=0)
+# app.config['SESSION_TYPE'] = 'redis'
+
+app.config['SESSION_TYPE'] = 'filesystem'
+
 
 # Endpoint well-known/credential_issuer_config
 @app.route('/.well-known/credential_issuer_config', methods=['GET'])
 def well_known_credential_issuer_config():
-    # Implémentez votre logique pour /.well-known/credential_issuer_config ici
-    return jsonify({})
+    config = {
+        "issuer": "https://talao.co/issuer/npwsshblrm",
+        "name": "Credential Issuer",
+        "description": "Issuer of Identity Credentials",
+        # "icons": [
+        #     {
+        #         "src": "https://example.com/logo.png",
+        #         "type": "image/png",
+        #         "height": 100,
+        #         "width": 100
+        #     }
+        # ],
+        "types_supported": ["IdentityCredential"],
+        "credential_types_supported": [
+            {
+                "type": "IdentityCredential",
+                "name": "Identity Credential",
+                "description": "Credential for identity",
+                "version": "1.0",
+                "format": "vc+sd-jwt",
+                "display": {
+                    "name": "Identity Credential",
+                    "text": "Your Identity Credential"
+                }
+            }
+        ]
+    }
+    return jsonify(config)
+
 
 # Endpoint well-known/openid-configuration @ https://talao.co/issuer/npwsshblrm/.well-known/openid-configuration
 @app.route('/.well-known/openid-configuration', methods=['GET'])
@@ -67,6 +100,7 @@ def well_known_openid_configuration():
     }
     return jsonify(config)
 
+
 # Endpoint jwks
 @app.route('/jwks', methods=['GET'])
 def jwks():
@@ -79,6 +113,7 @@ def jwks():
     }
     return jsonify(jwks)
 
+
 # Endpoint token
 @app.route('/token', methods=['POST'])
 def token_endpoint():
@@ -89,10 +124,11 @@ def token_endpoint():
         pre_authorized_code = request.form.get('pre_authorized_code')
         redirect_uri = request.form.get('redirect_uri')
 
-        pre_authorized_code = 'dNabZC7KIa2t3LIyTPeGFpc7r7QIjcuMYN_ACc2Wm28'
+        # Utilisez votre variable de pre_authorized_code correctement
+        pre_authorized_code = pre_authorized_code_user
 
         if grant_type == 'urn:ietf:params:oauth:grant-type:pre-authorized_code':
-            # Valide pre auth et return le token 
+            # Valide pre auth et retourne le token 
             access_token = validate_pre_authorized_code(client_id, client_secret, pre_authorized_code, redirect_uri)
 
             # Construit et retourne la réponse du jeton
@@ -106,17 +142,35 @@ def token_endpoint():
         else:
             return jsonify({'error': 'Type de subvention non pris en charge'}), 400
 
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 401  # Code 401 pour les erreurs d'authentification
+
+    except requests.exceptions.RequestException as re:
+        logging.error(f"Erreur de réseau : {str(re)}")
+        return jsonify({'error': 'Erreur de réseau'}), 500
+
     except Exception as e:
         logging.error(f"Erreur dans le point de terminaison /token : {str(e)}")
         return jsonify({'error': 'Erreur interne du serveur'}), 500
 
+# # Valider le code pré-autorisé
+# def validate_pre_authorized_code(client_id, client_secret, pre_authorized_code, redirect_uri):
+#     if pre_authorized_code == 'dNabZC7KIa2t3LIyTPeGFpc7r7QIjcuMYN_ACc2Wm28':
+#         # Genere et renvoi un token
+#         return 'sample_access_token'
+#     else:
+#         raise Exception('Code pré-autorisé invalide')
+
+
 # Valider le code pré-autorisé
 def validate_pre_authorized_code(client_id, client_secret, pre_authorized_code, redirect_uri):
-    if pre_authorized_code == 'dNabZC7KIa2t3LIyTPeGFpc7r7QIjcuMYN_ACc2Wm28':
-        # Genere et renvoi un token
-        return 'sample_access_token'
+    if pre_authorized_code:
+        access_token = 'sample_access_token'
+        return access_token
     else:
         raise Exception('Code pré-autorisé invalide')
+
+
 
 # Endpoint credential
 @app.route('/credential', methods=['POST'])
@@ -138,33 +192,107 @@ def credential_endpoint():
         return jsonify({'error': 'Erreur interne du serveur'}), 500
 
 
+
+
+##Partie API @ https://trial.authlete.net/api/offer/issue
+# Endpoint pour obtenir l'offre de justificatif d'identité
+# Endpoint pour obtenir l'offre de justificatif d'identité
+@app.route('/get_credential_offer', methods=['GET'])
+def get_credential_offer():
+    try:
+        # URL de l'endpoint d'offre de justificatif d'identité
+        offer_endpoint = "https://trial.authlete.net/api/offer/issue"
+
+        print("Requesting credential offer")
+
+        # Paramètres de la requête 
+        request_params = {
+            "credentials": ["IdentityCredential"],
+            "grants": {"urn:ietf:params:oauth:grant-type:pre-authorized_code": {}}
+        }
+
+        # Envoi de la requête POST pour obtenir l'offre
+        response = requests.post(offer_endpoint, json=request_params)
+
+        # Vérification de la réponse
+        print("HTTP Status Code:", response.status_code)
+        print("Response from credential offer endpoint:")
+        print(response.text)
+
+        response.raise_for_status()  # Cette ligne générera une exception si la réponse n'est pas 2xx
+
+        offer_data = response.json()
+        credential_offer_uri = offer_data.get("credentialOfferUri")
+
+        # Extraction des données de l'URI
+        uri_data = urlparse(credential_offer_uri)
+        query_params = parse_qs(uri_data.query)
+        pre_authorized_code = query_params.get('credential_offer_uri', [''])[0]
+
+        # Générer un QR code à partir de l'URI
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(credential_offer_uri)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        img.save("./img_qrcode/credential_offer_qr.png")
+
+        return jsonify({'success': True, 'credential_offer_uri': credential_offer_uri, 'pre_authorized_code': pre_authorized_code})
+
+    except requests.exceptions.RequestException as re:
+    logging.error(f"Erreur de réseau : {str(re)}")
+    return jsonify({'error': 'Erreur de réseau', 'details': str(re)}), 500
+
+    except requests.exceptions.HTTPError as he:
+        logging.error(f"Erreur HTTP : {str(he)}")
+        return jsonify({'error': 'Erreur lors de la demande d\'offre', 'details': str(he)}), 500
+
+    except Exception as e:
+        logging.error(f"Erreur lors de la demande d'offre : {str(e)}")
+        return jsonify({'error': 'Erreur interne du serveur'}), 500
+
+@app.route('/show_qr_code', methods=['GET'])
+def show_qr_code():
+    return send_file("./img_qrcode/credential_offer_qr.png", mimetype='image/png')
+
+##---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=4000, debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=True)
 
     # Test well-known/credential_issuer_config (GET)
-    response_config = requests.get('http://localhost:4000/.well-known/credential_issuer_config')
+    response_config = requests.get('http://localhost:5000/.well-known/credential_issuer_config')
     print("Response from /.well-known/credential_issuer_config:")
     print(response_config.json())
 
     # Test well-known/openid-configuration (GET)
-    response_openid_config = requests.get('http://localhost:4000/.well-known/openid-configuration')
+    response_openid_config = requests.get('http://localhost:5000/.well-known/openid-configuration')
     print("\nResponse from /.well-known/openid-configuration:")
     print(response_openid_config.json())
 
     # Test jwks (GET)
-    response_jwks = requests.get('http://localhost:4000/jwks')
+    response_jwks = requests.get('http://localhost:5000/jwks')
     print("\nResponse from /jwks:")
     print(response_jwks.json())
 
     # Test token (POST)
     data_token = {
-        'client_id': 'client_id',
-        'client_id': 'client_id',
-        'grant_type': 'urn:ietf:params:oauth:grant-type:pre-authorized_code',
-        'pre_authorized_code': 'dNabZC7KIa2t3LIyTPeGFpc7r7QIjcuMYN_ACc2Wm28',
-        'redirect_uri': '/token'
+    'client_id': 'client_id',
+    'client_secret': 'client_secret',  # Correction : utiliser la clé correcte
+    'grant_type': 'urn:ietf:params:oauth:grant-type:pre-authorized_code',
+    'pre_authorized_code': 'pre_authorized_code_user',
+    'redirect_uri': '/token'
     }
-    response_token = requests.post('http://localhost:4000/token', data=data_token)
+
+    response_get_credential_offer = requests.post('http://localhost:5000/get_credential_offer')
+    data_token['pre_authorized_code'] = response_get_credential_offer.json().get('pre_authorized_code', '')
+
+    response_token = requests.post('http://localhost:5000/token', json=data_token)
+
     print("\nResponse from /token:")
     print(response_token.json())
 
@@ -174,7 +302,19 @@ if __name__ == '__main__':
         'subject': 'subject',
         'issuer': 'issuer',
         # autre a add ??
-    }x
-    response_credential = requests.post('http://localhost:4000/credential', json=data_credential)
+    }
+    response_credential = requests.post('http://localhost:5000/credential', json=data_credential)
+    print("\nResponse from /credential:")
+    print(response_credential.json())
+
+
+    # Test credential (POST)
+    data_credential = {
+        'credential_type': 'response_credential',
+        'subject': 'subject',
+        'issuer': 'issuer',
+        # autre a add ??
+    }
+    response_credential = requests.post('http://localhost:5000/credential', json=data_credential)
     print("\nResponse from /credential:")
     print(response_credential.json())

@@ -17,7 +17,11 @@ logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 
-red = redis.Redis(host='localhost', port=6379, db=0)
+# red = redis.Redis(host='localhost', port=6379, db=0)
+# app.config['SESSION_TYPE'] = 'redis'
+
+app.config['SESSION_TYPE'] = 'filesystem'
+
 
 # Générer une paire de clés RSA
 def generate_rsa_key_pair():
@@ -26,14 +30,14 @@ def generate_rsa_key_pair():
     public_key = key.publickey().export_key()
     return private_key, public_key
 
-# Signature des données avec la clé privée
+# Signature des données avec la private key
 def sign_data(private_key, data):
     key = RSA.import_key(private_key)
     h = SHA256.new(data)
     signature = pkcs1_15.new(key).sign(h)
     return signature
 
-# Vérification de la signature avec la clé publique
+# Vérif signature avec la public key
 def verify_signature(public_key, data, signature):
     key = RSA.import_key(public_key)
     h = SHA256.new(data)
@@ -46,8 +50,27 @@ def verify_signature(public_key, data, signature):
 # Endpoint well-known/credential_issuer_config
 @app.route('/.well-known/credential_issuer_config', methods=['GET'])
 def well_known_credential_issuer_config():
-    # Implémentez votre logique pour /.well-known/credential_issuer_config ici
-    return jsonify({})
+    config = {
+        "issuer": "https://talao.co/issuer/npwsshblrm",
+        "name": "My Credential Issuer",
+        "description": "Issuer of Identity Credentials",
+        "types_supported": ["IdentityCredential"],
+        "credential_types_supported": [
+            {
+                "type": "IdentityCredential",
+                "name": "Identity Credential",
+                "description": "Credential for identity",
+                "version": "1.0",
+                "format": "vc+sd-jwt",
+                "display": {
+                    "name": "Identity Credential",
+                    "text": "Your Identity Credential"
+                }
+            }
+        ]
+    }
+    return jsonify(config)
+
 
 # Endpoint well-known/openid-configuration @ https://talao.co/issuer/npwsshblrm/.well-known/openid-configuration
 @app.route('/.well-known/openid-configuration', methods=['GET'])
@@ -166,21 +189,20 @@ def credential_endpoint():
 
 
 if __name__ == '__main__':
-    private_key, public_key = generate_rsa_key_pair()
-    app.run(host='0.0.0.0', port=4000, debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=True)
 
     # Test well-known/credential_issuer_config (GET)
-    response_config = requests.get('http://localhost:4000/.well-known/credential_issuer_config')
+    response_config = requests.get('http://localhost:5000/.well-known/credential_issuer_config')
     print("Response from /.well-known/credential_issuer_config:")
     print(response_config.json())
 
     # Test well-known/openid-configuration (GET)
-    response_openid_config = requests.get('http://localhost:4000/.well-known/openid-configuration')
+    response_openid_config = requests.get('http://localhost:5000/.well-known/openid-configuration')
     print("\nResponse from /.well-known/openid-configuration:")
     print(response_openid_config.json())
 
     # Test jwks (GET)
-    response_jwks = requests.get('http://localhost:4000/jwks')
+    response_jwks = requests.get('http://localhost:5000/jwks')
     print("\nResponse from /jwks:")
     print(response_jwks.json())
 
@@ -190,9 +212,9 @@ if __name__ == '__main__':
         'client_id': 'client_id',
         'grant_type': 'urn:ietf:params:oauth:grant-type:pre-authorized_code',
         'pre_authorized_code': 'dNabZC7KIa2t3LIyTPeGFpc7r7QIjcuMYN_ACc2Wm28',
-        'redirect_uri': 'your_redirect_uri'
+        'redirect_uri': '/token'
     }
-    response_token = requests.post('http://localhost:4000/token', data=data_token)
+    response_token = requests.post('http://localhost:5000/token', data=data_token)
     print("\nResponse from /token:")
     print(response_token.json())
 
@@ -203,6 +225,18 @@ if __name__ == '__main__':
         'issuer': 'issuer',
         # autre a add ??
     }
-    response_credential = requests.post('http://localhost:4000/credential', json=data_credential)
+    response_credential = requests.post('http://localhost:5000/credential', json=data_credential)
+    print("\nResponse from /credential:")
+    print(response_credential.json())
+
+
+    # Test credential (POST)
+    data_credential = {
+        'credential_type': 'response_credential',
+        'subject': 'subject',
+        'issuer': 'issuer',
+        # autre a add ??
+    }
+    response_credential = requests.post('http://localhost:5000/credential', json=data_credential)
     print("\nResponse from /credential:")
     print(response_credential.json())

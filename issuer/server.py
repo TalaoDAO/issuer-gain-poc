@@ -7,6 +7,27 @@ import uuid
 ACCESS_TOKEN_LIFE = 10000
 C_NONCE_LIFE = 5000
 
+# Endpoint pour obtenir un jeton
+# @app.route('/get_token', methods=['GET'])
+# def get_token():
+#     client_id = "client_id"  # Remplacez par votre véritable client_id
+#     client_secret = "client_secret"  # Remplacez par votre véritable client_secret
+#     grant_type = "urn:ietf:params:oauth:grant-type:pre-authorized_code"
+#     pre_authorized_code = "dNabZC7KIa2t3LIyTPeGFpc7r7QIjcuMYN_ACc2Wm28"
+#     redirect_uri = "/token"
+
+#     # Demande de jeton à l'émetteur d'identité
+#     token_url = "http://127.0.0.1:5000/issuer/token"  # Remplacez par l'URL correcte
+#     data = {
+#         'client_id': client_id,
+#         'client_secret': client_secret,
+#         'grant_type': grant_type,
+#         'pre_authorized_code': pre_authorized_code,
+#         'redirect_uri': redirect_uri
+#     }
+
+#     response = requests.post(token_url, data=data)
+#     return response.text, response.status_code
 
 # Redis init red = redis.StrictRedis()
 red= redis.Redis(host='localhost', port=6379, db=0)
