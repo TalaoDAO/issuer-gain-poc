@@ -29,14 +29,6 @@ def well_known_credential_issuer_config():
         "issuer": "https://talao.co/issuer/npwsshblrm",
         "name": "Credential Issuer",
         "description": "Issuer of Identity Credentials",
-        # "icons": [
-        #     {
-        #         "src": "https://example.com/logo.png",
-        #         "type": "image/png",
-        #         "height": 100,
-        #         "width": 100
-        #     }
-        # ],
         "types_supported": ["IdentityCredential"],
         "credential_types_supported": [
             {
@@ -124,7 +116,6 @@ def token_endpoint():
         pre_authorized_code = request.form.get('pre_authorized_code')
         redirect_uri = request.form.get('redirect_uri')
 
-        # Utilisez votre variable de pre_authorized_code correctement
         pre_authorized_code = pre_authorized_code_user
 
         if grant_type == 'urn:ietf:params:oauth:grant-type:pre-authorized_code':
@@ -143,7 +134,7 @@ def token_endpoint():
             return jsonify({'error': 'Type de subvention non pris en charge'}), 400
 
     except ValueError as ve:
-        return jsonify({'error': str(ve)}), 401  # Code 401 pour les erreurs d'authentification
+        return jsonify({'error': str(ve)}), 401  # 401 pour  erreurs d'auth
 
     except requests.exceptions.RequestException as re:
         logging.error(f"Erreur de réseau : {str(re)}")
@@ -153,13 +144,6 @@ def token_endpoint():
         logging.error(f"Erreur dans le point de terminaison /token : {str(e)}")
         return jsonify({'error': 'Erreur interne du serveur'}), 500
 
-# # Valider le code pré-autorisé
-# def validate_pre_authorized_code(client_id, client_secret, pre_authorized_code, redirect_uri):
-#     if pre_authorized_code == 'dNabZC7KIa2t3LIyTPeGFpc7r7QIjcuMYN_ACc2Wm28':
-#         # Genere et renvoi un token
-#         return 'sample_access_token'
-#     else:
-#         raise Exception('Code pré-autorisé invalide')
 
 
 # Valider le code pré-autorisé
@@ -196,7 +180,6 @@ def credential_endpoint():
 
 ##Partie API @ https://trial.authlete.net/api/offer/issue
 # Endpoint pour obtenir l'offre de justificatif d'identité
-# Endpoint pour obtenir l'offre de justificatif d'identité
 @app.route('/get_credential_offer', methods=['GET'])
 def get_credential_offer():
     try:
@@ -214,17 +197,17 @@ def get_credential_offer():
         # Envoi de la requête POST pour obtenir l'offre
         response = requests.post(offer_endpoint, json=request_params)
 
-        # Vérification de la réponse
+        # Vérif de la réponse
         print("HTTP Status Code:", response.status_code)
         print("Response from credential offer endpoint:")
         print(response.text)
 
-        response.raise_for_status()  # Cette ligne générera une exception si la réponse n'est pas 2xx
+        response.raise_for_status() 
 
         offer_data = response.json()
         credential_offer_uri = offer_data.get("credentialOfferUri")
 
-        # Extraction des données de l'URI
+        # Recup des données de l'URI
         uri_data = urlparse(credential_offer_uri)
         query_params = parse_qs(uri_data.query)
         pre_authorized_code = query_params.get('credential_offer_uri', [''])[0]
@@ -249,11 +232,11 @@ def get_credential_offer():
 
     except requests.exceptions.HTTPError as he:
         logging.error(f"Erreur HTTP : {str(he)}")
-        return jsonify({'error': 'Erreur lors de la demande d\'offre', 'details': str(he)}), 500
+    return jsonify({'error': 'Erreur lors de la demande d\'offre', 'details': str(he)}), 500
 
     except Exception as e:
         logging.error(f"Erreur lors de la demande d'offre : {str(e)}")
-        return jsonify({'error': 'Erreur interne du serveur'}), 500
+    return jsonify({'error': 'Erreur interne du serveur'}), 500
 
 @app.route('/show_qr_code', methods=['GET'])
 def show_qr_code():
@@ -282,7 +265,7 @@ if __name__ == '__main__':
     # Test token (POST)
     data_token = {
     'client_id': 'client_id',
-    'client_secret': 'client_secret',  # Correction : utiliser la clé correcte
+    'client_secret': 'client_secret', 
     'grant_type': 'urn:ietf:params:oauth:grant-type:pre-authorized_code',
     'pre_authorized_code': 'pre_authorized_code_user',
     'redirect_uri': '/token'
@@ -307,14 +290,3 @@ if __name__ == '__main__':
     print("\nResponse from /credential:")
     print(response_credential.json())
 
-
-    # Test credential (POST)
-    data_credential = {
-        'credential_type': 'response_credential',
-        'subject': 'subject',
-        'issuer': 'issuer',
-        # autre a add ??
-    }
-    response_credential = requests.post('http://localhost:5000/credential', json=data_credential)
-    print("\nResponse from /credential:")
-    print(response_credential.json())
