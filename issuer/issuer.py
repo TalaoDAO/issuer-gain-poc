@@ -191,7 +191,9 @@ def get_credential_offer():
         # Paramètres de la requête 
         request_params = {
             "credentials": ["IdentityCredential"],
-            "grants": {"urn:ietf:params:oauth:grant-type:pre-authorized_code": {}}
+            "grants": {"urn:ietf:params:oauth:grant-type:pre-authorized_code": {
+                # "pre-authorized_code": "ac03c4b8-9da2-11ee-95b7-0a1628958560"
+            }}
         }
 
         # Envoi de la requête POST pour obtenir l'offre
@@ -227,12 +229,12 @@ def get_credential_offer():
         return jsonify({'success': True, 'credential_offer_uri': credential_offer_uri, 'pre_authorized_code': pre_authorized_code})
 
     except requests.exceptions.RequestException as re:
-    logging.error(f"Erreur de réseau : {str(re)}")
-    return jsonify({'error': 'Erreur de réseau', 'details': str(re)}), 500
+        logging.error(f"Erreur de réseau : {str(re)}")
+        return jsonify({'error': 'Erreur de réseau', 'details': str(re)}), 500
 
     except requests.exceptions.HTTPError as he:
         logging.error(f"Erreur HTTP : {str(he)}")
-    return jsonify({'error': 'Erreur lors de la demande d\'offre', 'details': str(he)}), 500
+        return jsonify({'error': 'Erreur lors de la demande d\'offre', 'details': str(he)}), 500
 
     except Exception as e:
         logging.error(f"Erreur lors de la demande d'offre : {str(e)}")
@@ -240,8 +242,41 @@ def get_credential_offer():
 
 @app.route('/show_qr_code', methods=['GET'])
 def show_qr_code():
-    return send_file("./img_qrcode/credential_offer_qr.png", mimetype='image/png')
+    # Génére le QR code 
+    credential_offer_uri = generate_credential_offer_uri()
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(credential_offer_uri)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    image_stream = BytesIO()
+    img.save(image_stream)
+    image_stream.seek(0)
 
+
+    return send_file(image_stream, mimetype='img_qrcode/png')
+
+# Génére l'URI de l'offre de justif d'identité
+def generate_credential_offer_uri():
+    offer_endpoint = "https://trial.authlete.net/api/offer/issue"
+    request_params = {
+        "credentials": ["IdentityCredential"],
+        "grants": {"urn:ietf:params:oauth:grant-type:pre-authorized_code": {
+            # "pre-authorized_code": "ac03c4b8-9da2-11ee-95b7-0a1628958560"
+        }}
+    }
+
+    response = requests.post(offer_endpoint, json=request_params)
+    response.raise_for_status()
+    offer_data = response.json()
+    credential_offer_uri = offer_data.get("credentialOfferUri")
+
+    return credential_offer_uri
 ##---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 if __name__ == '__main__':
