@@ -1,18 +1,18 @@
 import base64
-from flask import Flask, request, jsonify, render_template, send_file
-import socket
-from jwcrypto import jwk, jwt
-import requests
+import hashlib
 import json
-from urllib.parse import parse_qs, urlparse
-import redis
-import sys
 import logging
+import math
+import os
 from datetime import datetime
+from urllib.parse import parse_qs, urlparse
 import qrcode
-
+import requests
+from flask import Flask, jsonify, request, send_file
+from jwcrypto import jwk, jwt
 
 logging.basicConfig(level=logging.INFO)
+# app.logger.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 
@@ -99,7 +99,7 @@ def jwks():
     # Génére RSA pour signer les JWT
     key = jwk.JWK.generate(kty='RSA', size=2048)
 
-    # Crer JSON Web Key Set (JWKS) avec la clé publique
+    # Creer JSON Web Key Set (JWKS) avec la clé publique
     jwks = {
         "keys": [key.export(as_dict=True)]
     }
@@ -146,7 +146,7 @@ def token_endpoint():
 
 
 
-# Valider le code pré-autorisé
+# Valide le code pré-auth
 def validate_pre_authorized_code(client_id, client_secret, pre_authorized_code, redirect_uri):
     if pre_authorized_code:
         access_token = 'sample_access_token'
@@ -165,7 +165,7 @@ def credential_endpoint():
             'credential_type': data.get('credential_type'),
             'subject': data.get('subject'),
             'issuer': data.get('issuer'),
-            # autre a ajouter ??
+            # autre a add ??
         }
 
         response_data = {'message': 'La logique du point de terminaison /credential va ici', 'credential_data': credential_data}
@@ -177,35 +177,93 @@ def credential_endpoint():
 
 
 
+                                                #Signature
+#-------------------------------------------------------------------------------------------------
+    
+# Fonction pour signer un SD-JWT
+def salt():
+    return base64.urlsafe_b64encode(os.urandom(16)).decode().replace("=", "")
+
+def hash(text):
+    m = hashlib.sha256()
+    m.update(text.encode())
+    return base64.urlsafe_b64encode(m.digest()).decode().replace("=", "")
+
+def sign_sd_jwt(unsecured, issuer_key, issuer, subject_key):
+    issuer_key = json.loads(issuer_key) if isinstance(issuer_key, str) else issuer_key
+    _sd = []
+    _disclosure = ""
+        
+    for claim in [attribute for attribute in unsecured.keys() if attribute != "vct"]:
+        contents = json.dumps([salt(), claim, unsecured[claim]])
+        disclosure = base64.urlsafe_b64encode(contents.encode()).decode().replace("=", "")
+        _disclosure += "~" + disclosure
+        _sd.append(hash(disclosure))
+        
+        signer_key = jwk.JWK(**issuer_key)
+        pub_key = json.loads(signer_key.export(private_key=False))
+        pub_key['kid'] = signer_key.thumbprint()
+        
+        header = {
+            'typ': "vc+sd-jwt",
+            'kid': pub_key['kid'],
+            'alg': 'ES256'
+        }
+        
+        payload = {
+            'iss': issuer,
+            'iat': math.ceil(datetime.timestamp(datetime.now())),
+            'exp': math.ceil(datetime.timestamp(datetime.now())) + 10000,
+            "_sd_alg": "sha256",
+            "cnf": {
+                "jwk": subject_key
+            },
+            "_sd": _sd,
+            "vct": unsecured['vct'],
+        }
+        
+        token = jwt.JWT(header=header, claims=payload, algs=['ES256'])
+        token.make_signed_token(signer_key)
+        
+    return token.serialize() + _disclosure
+
+#-------------------------------------------------------------------------------------------------  
+
+# Génére l'URI de l'offre de justif d'identité
+def generate_credential_offer_uri():
+    offer_endpoint = "https://trial.authlete.net/api/offer/issue"
+    request_params = {
+        "credentials": ["IdentityCredential"],
+        "grants": {"urn:ietf:params:oauth:grant-type:pre-authorized_code": {}}
+    }
+
+    response = requests.post(offer_endpoint, json=request_params)
+    response.raise_for_status()
+    offer_data = response.json()
+    credential_offer_uri = offer_data.get("credentialOfferUri")
+
+    return credential_offer_uri
 
 ##Partie API @ https://trial.authlete.net/api/offer/issue
-# Endpoint pour obtenir l'offre de justificatif d'identité
+# Endpoint pour obtenir l'offre de justif d'idd
 @app.route('/get_credential_offer', methods=['GET'])
 def get_credential_offer():
     try:
-        # URL de l'endpoint d'offre de justificatif d'identité
+        # URL de l'endpoint 
         offer_endpoint = "https://trial.authlete.net/api/offer/issue"
 
         print("Requesting credential offer")
 
-        # Paramètres de la requête 
+        # Param de la requête
         request_params = {
             "credentials": ["IdentityCredential"],
-            "grants": {"urn:ietf:params:oauth:grant-type:pre-authorized_code": {
-                # "pre-authorized_code": "ac03c4b8-9da2-11ee-95b7-0a1628958560"
-            }}
+            "grants": {"urn:ietf:params:oauth:grant-type:pre-authorized_code": {}}
         }
 
         # Envoi de la requête POST pour obtenir l'offre
         response = requests.post(offer_endpoint, json=request_params)
-
-        # Vérif de la réponse
-        print("HTTP Status Code:", response.status_code)
-        print("Response from credential offer endpoint:")
-        print(response.text)
-
-        response.raise_for_status() 
-
+        response.raise_for_status()
+        
         offer_data = response.json()
         credential_offer_uri = offer_data.get("credentialOfferUri")
 
@@ -214,19 +272,27 @@ def get_credential_offer():
         query_params = parse_qs(uri_data.query)
         pre_authorized_code = query_params.get('credential_offer_uri', [''])[0]
 
-        # Générer un QR code à partir de l'URI
+        # Génére un SD-JWT à partir de l'URI
+        unsecured = {"vct": "https://credentials.example.com/identity_credential"}
+        issuer_key = {"kty": "EC", "crv": "P-256", "x": "your_x", "y": "your_y"}
+        issuer = "your_issuer"
+        subject_key = {"kty": "EC", "crv": "P-256", "x": "subject_x", "y": "subject_y"}
+        signed_sd_jwt = sign_sd_jwt(unsecured, issuer_key, issuer, subject_key)
+
+        # Génére un QRcode à partir du SD-JWT
         qr = qrcode.QRCode(
             version=1,
             error_correction=qrcode.constants.ERROR_CORRECT_L,
             box_size=10,
             border=4,
         )
-        qr.add_data(credential_offer_uri)
+        qr.add_data(signed_sd_jwt)
         qr.make(fit=True)
         img = qr.make_image(fill_color="black", back_color="white")
         img.save("./img_qrcode/credential_offer_qr.png")
 
-        return jsonify({'success': True, 'credential_offer_uri': credential_offer_uri, 'pre_authorized_code': pre_authorized_code})
+        return jsonify({'success': True, 'credential_offer_uri': credential_offer_uri,
+                        'pre_authorized_code': pre_authorized_code})
 
     except requests.exceptions.RequestException as re:
         logging.error(f"Erreur de réseau : {str(re)}")
@@ -238,45 +304,42 @@ def get_credential_offer():
 
     except Exception as e:
         logging.error(f"Erreur lors de la demande d'offre : {str(e)}")
-    return jsonify({'error': 'Erreur interne du serveur'}), 500
+        return jsonify({'error': 'Erreur interne du serveur'}), 500
 
+
+# Endpoint pour obtenir l'offre de justif d'idd
 @app.route('/show_qr_code', methods=['GET'])
 def show_qr_code():
-    # Génére le QR code 
-    credential_offer_uri = generate_credential_offer_uri()
-    qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_L,
-        box_size=10,
-        border=4,
-    )
-    qr.add_data(credential_offer_uri)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    
-    image_stream = BytesIO()
-    img.save(image_stream)
-    image_stream.seek(0)
+    try:
+        # Génére l'URI de l'offre de justif d'idd
+        credential_offer_uri = generate_credential_offer_uri()
 
+        # Config du code QR
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(credential_offer_uri)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        image_stream = BytesIO()
+        img.save(image_stream)
+        image_stream.seek(0)
 
-    return send_file(image_stream, mimetype='img_qrcode/png')
+        # Renvoi en PNG
+        return send_file(image_stream, mimetype='img_qrcode/png')
 
-# Génére l'URI de l'offre de justif d'identité
-def generate_credential_offer_uri():
-    offer_endpoint = "https://trial.authlete.net/api/offer/issue"
-    request_params = {
-        "credentials": ["IdentityCredential"],
-        "grants": {"urn:ietf:params:oauth:grant-type:pre-authorized_code": {
-            # "pre-authorized_code": "ac03c4b8-9da2-11ee-95b7-0a1628958560"
-        }}
-    }
+    except requests.exceptions.RequestException as re:
+        return jsonify({'error': 'Erreur de réseau', 'details': str(re)}), 500
 
-    response = requests.post(offer_endpoint, json=request_params)
-    response.raise_for_status()
-    offer_data = response.json()
-    credential_offer_uri = offer_data.get("credentialOfferUri")
+    except requests.exceptions.HTTPError as he:
+        return jsonify({'error': 'Erreur lors de la demande d\'offre', 'details': str(he)}), 500
 
-    return credential_offer_uri
+    except Exception as e:
+        return jsonify({'error': 'Erreur interne du serveur'}), 500
+
 ##---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 if __name__ == '__main__':
@@ -297,20 +360,24 @@ if __name__ == '__main__':
     print("\nResponse from /jwks:")
     print(response_jwks.json())
 
+    # Test get_credential_offer (GET)
+    response_get_credential_offer = requests.get('http://localhost:5000/get_credential_offer')
+    print("\nResponse from /get_credential_offer:")
+    print(response_get_credential_offer.json())
+
+    # Extract pre_authorized_code from the response
+    pre_authorized_code = response_get_credential_offer.json().get('pre_authorized_code', '')
+
     # Test token (POST)
     data_token = {
-    'client_id': 'client_id',
-    'client_secret': 'client_secret', 
-    'grant_type': 'urn:ietf:params:oauth:grant-type:pre-authorized_code',
-    'pre_authorized_code': 'pre_authorized_code_user',
-    'redirect_uri': '/token'
+        'client_id': 'client_id',
+        'client_secret': 'client_secret',
+        'grant_type': 'urn:ietf:params:oauth:grant-type:pre-authorized_code',
+        'pre_authorized_code': pre_authorized_code,
+        'redirect_uri': '/token'
     }
 
-    response_get_credential_offer = requests.post('http://localhost:5000/get_credential_offer')
-    data_token['pre_authorized_code'] = response_get_credential_offer.json().get('pre_authorized_code', '')
-
-    response_token = requests.post('http://localhost:5000/token', json=data_token)
-
+    response_token = requests.post('http://localhost:5000/token', data=data_token)
     print("\nResponse from /token:")
     print(response_token.json())
 
@@ -321,6 +388,7 @@ if __name__ == '__main__':
         'issuer': 'issuer',
         # autre a add ??
     }
+
     response_credential = requests.post('http://localhost:5000/credential', json=data_credential)
     print("\nResponse from /credential:")
     print(response_credential.json())
