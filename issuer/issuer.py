@@ -181,14 +181,6 @@ def credential_endpoint():
 #-------------------------------------------------------------------------------------------------
     
 # Fonction pour signer un SD-JWT
-def salt():
-    return base64.urlsafe_b64encode(os.urandom(16)).decode().replace("=", "")
-
-def hash(text):
-    m = hashlib.sha256()
-    m.update(text.encode())
-    return base64.urlsafe_b64encode(m.digest()).decode().replace("=", "")
-
 def sign_sd_jwt(unsecured, issuer_key, issuer, subject_key):
     issuer_key = json.loads(issuer_key) if isinstance(issuer_key, str) else issuer_key
     _sd = []
@@ -200,32 +192,40 @@ def sign_sd_jwt(unsecured, issuer_key, issuer, subject_key):
         _disclosure += "~" + disclosure
         _sd.append(hash(disclosure))
         
-        signer_key = jwk.JWK(**issuer_key)
-        pub_key = json.loads(signer_key.export(private_key=False))
-        pub_key['kid'] = signer_key.thumbprint()
+    signer_key = jwk.JWK(**issuer_key)
+    pub_key = json.loads(signer_key.export(private_key=False))
+    pub_key['kid'] = signer_key.thumbprint()
         
-        header = {
-            'typ': "vc+sd-jwt",
-            'kid': pub_key['kid'],
-            'alg': 'ES256'
-        }
+    header = {
+        'typ': "vc+sd-jwt",
+        'kid': pub_key['kid'],
+        'alg': 'ES256'
+    }
         
-        payload = {
-            'iss': issuer,
-            'iat': math.ceil(datetime.timestamp(datetime.now())),
-            'exp': math.ceil(datetime.timestamp(datetime.now())) + 10000,
-            "_sd_alg": "sha256",
-            "cnf": {
-                "jwk": subject_key
-            },
-            "_sd": _sd,
-            "vct": unsecured['vct'],
-        }
+    payload = {
+        'iss': issuer,
+        'iat': math.ceil(datetime.timestamp(datetime.now())),
+        'exp': math.ceil(datetime.timestamp(datetime.now())) + 10000,
+        "_sd_alg": "sha256",
+        "cnf": {
+            "jwk": subject_key
+        },
+        "_sd": _sd,
+        "vct": unsecured['vct'],
+    }
         
-        token = jwt.JWT(header=header, claims=payload, algs=['ES256'])
-        token.make_signed_token(signer_key)
+    token = jwt.JWT(header=header, claims=payload, algs=['ES256'])
+    token.make_signed_token(signer_key)
         
     return token.serialize() + _disclosure
+
+def salt():
+    return base64.urlsafe_b64encode(os.urandom(16)).decode().replace("=", "")
+
+def hash(text):
+    m = hashlib.sha256()
+    m.update(text.encode())
+    return base64.urlsafe_b64encode(m.digest()).decode().replace("=", "")
 
 #-------------------------------------------------------------------------------------------------  
 
