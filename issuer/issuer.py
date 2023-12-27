@@ -5,7 +5,6 @@ import logging
 import math
 import os
 from datetime import datetime
-from urllib.parse import parse_qs, urlparse
 import qrcode
 import requests
 from flask import Flask, jsonify, request, send_file
