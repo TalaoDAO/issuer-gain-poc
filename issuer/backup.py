@@ -7,8 +7,9 @@ import os
 from datetime import datetime
 import qrcode
 import requests
-from flask import Flask, Response, request, jsonify
+from flask import Flask, jsonify, Response, request, send_file
 from jwcrypto import jwk, jwt
+
 
 
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +21,7 @@ app = Flask(__name__)
 # app.config['SESSION_TYPE'] = 'redis'
 
 app.config['SESSION_TYPE'] = 'filesystem'
+
 
 # Endpoint well-known/credential_issuer_config
 @app.route('/.well-known/credential_issuer_config', methods=['GET'])
@@ -43,10 +45,10 @@ def well_known_credential_issuer_config():
             }
         ]
     }
-    response = Response(json.dumps(config), content_type='application/json')
-    return response
+    return jsonify(config)
 
-# Endpoint well-known/openid-configuration
+
+# Endpoint well-known/openid-configuration @ https://talao.co/issuer/npwsshblrm/.well-known/openid-configuration
 @app.route('/.well-known/openid-configuration', methods=['GET'])
 def well_known_openid_configuration():
     config = {
@@ -78,7 +80,8 @@ def well_known_openid_configuration():
         "response_types_supported": ["vp_token", "id_token"],
         "scopes_supported": ["openid"],
         "subject_syntax_types_discriminations": ["did:key:jwk_jcs-pub", "did:ebsi:v1"],
-        "subject_syntax_types_supported": ["urn:ietf:params:oauth:jwk-thumbprint", "did:key", "did:ebsi", "did:tz",                                           "did:pkh", "did:hedera", "did:key", "did:ethr", "did:web", "did:jwk"],
+        "subject_syntax_types_supported": ["urn:ietf:params:oauth:jwk-thumbprint", "did:key", "did:ebsi", "did:tz",
+                                           "did:pkh", "did:hedera", "did:key", "did:ethr", "did:web", "did:jwk"],
         "subject_trust_frameworks_supported": ["ebsi"],
         "subject_types_supported": ["public"],
         "token_endpoint": "https://talao.co/issuer/npwsshblrm/token",
@@ -88,69 +91,71 @@ def well_known_openid_configuration():
             "jwt_vp": {"alg_values_supported": ["ES256", "ES256K", "EdDSA", "RS256"]}
         }
     }
-    response = Response(json.dumps(config), content_type='application/json')
-    return response
+    return jsonify(config)
+
 
 # Endpoint jwks
 @app.route('/jwks', methods=['GET'])
 def jwks():
-    # Remplacez la génération de la clé RSA par une clé EC P-256
-    key = jwk.JWK.generate(kty='EC', crv='P-256')
+    # Génére RSA pour signer les JWT
+    key = jwk.JWK.generate(kty='RSA', size=2048)
+
+    # Creer JSON Web Key Set (JWKS) avec la clé publique
     jwks = {
         "keys": [key.export(as_dict=True)]
     }
-    response = Response(json.dumps(jwks), content_type='application/json')
-    return response
+    return jsonify(jwks)
 
 
 # Endpoint token
 @app.route('/token', methods=['POST'])
 def token_endpoint():
     try:
-        # Possible errors:
-        # - ValueError: Raised if there is an issue with the input values.
-        # - requests.exceptions.RequestException: Raised for network-related errors.
-        # - Exception: Raised for other unexpected errors.
-
         client_id = request.form.get('client_id')
         client_secret = request.form.get('client_secret')
         grant_type = request.form.get('grant_type')
         pre_authorized_code = request.form.get('pre_authorized_code')
         redirect_uri = request.form.get('redirect_uri')
 
-        # Valide le type de subvention
-        if grant_type != 'urn:ietf:params:oauth:grant-type:pre-authorized_code':
+        pre_authorized_code = pre_authorized_code_user
+
+        if grant_type == 'urn:ietf:params:oauth:grant-type:pre-authorized_code':
+            # Valide pre auth et retourne le token 
+            access_token = validate_pre_authorized_code(client_id, client_secret, pre_authorized_code, redirect_uri)
+
+            # Construit et retourne la réponse du jeton
+            token_response = {
+                'access_token': access_token,
+                'token_type': 'Bearer',
+                'expires_in': 3600  # 1 hour
+            }
+            return jsonify(token_response)
+
+        else:
             return jsonify({'error': 'Type de subvention non pris en charge'}), 400
 
-        # Valide pre auth et retourne le token 
-        access_token = validate_pre_authorized_code(client_id, client_secret, pre_authorized_code, redirect_uri)
-
-        # Construit et retourne la réponse
-        token_response = {
-            'access_token': access_token,
-            'token_type': 'Bearer',
-            'expires_in': 3600
-        }
-
-        response = Response(json.dumps(token_response), content_type='application/json')
-        return response
-
     except ValueError as ve:
-        response = Response(json.dumps({'error': str(ve)}), content_type='application/json')
-        response.status_code = 401
-        return response
+        return jsonify({'error': str(ve)}), 401  # 401 pour  erreurs d'auth
 
     except requests.exceptions.RequestException as re:
         logging.error(f"Erreur de réseau : {str(re)}")
-        response = Response(json.dumps({'error': 'Erreur de réseau'}), content_type='application/json')
-        response.status_code = 500
-        return response
+        return jsonify({'error': 'Erreur de réseau'}), 500
 
     except Exception as e:
         logging.error(f"Erreur dans le point de terminaison /token : {str(e)}")
-        response = Response(json.dumps({'error': 'Erreur interne du serveur'}), content_type='application/json')
-        response.status_code = 500
-        return response
+        return jsonify({'error': 'Erreur interne du serveur'}), 500
+
+
+
+# Valide le code pré-auth
+def validate_pre_authorized_code(client_id, client_secret, pre_authorized_code, redirect_uri):
+    if pre_authorized_code:
+        access_token = 'sample_access_token'
+        return access_token
+    else:
+        raise Exception('Code pré-autorisé invalide')
+
+
 
 # Endpoint credential
 @app.route('/credential', methods=['POST'])
@@ -165,14 +170,13 @@ def credential_endpoint():
         }
 
         response_data = {'message': 'La logique du point de terminaison /credential va ici', 'credential_data': credential_data}
-        response = Response(json.dumps(response_data), content_type='application/json')
-        return response
+        return jsonify(response_data)
 
     except Exception as e:
         logging.error(f"Erreur dans le point de terminaison /credential : {str(e)}")
-        response = Response(json.dumps({'error': 'Erreur interne du serveur'}), content_type='application/json')
-        response.status_code = 500
-        return response
+        return jsonify({'error': 'Erreur interne du serveur'}), 500
+
+
 
                                                 #Signature
 #-------------------------------------------------------------------------------------------------
@@ -288,24 +292,54 @@ def get_credential_offer():
         img = qr.make_image(fill_color="black", back_color="white")
         img.save("./img_qrcode/credential_offer_qr.png")
 
-        return Response(json.dumps({'success': True, 'credential_offer_uri': credential_offer_uri,
-                                    'pre_authorized_code': pre_authorized_code}),
-                        content_type='application/json')
+        return jsonify({'success': True, 'credential_offer_uri': credential_offer_uri,
+                        'pre_authorized_code': pre_authorized_code})
 
     except requests.exceptions.RequestException as re:
         logging.error(f"Erreur de réseau : {str(re)}")
-        return Response(json.dumps({'error': 'Erreur de réseau', 'details': str(re)}), content_type='application/json'), 500
+        return jsonify({'error': 'Erreur de réseau', 'details': str(re)}), 500
 
     except requests.exceptions.HTTPError as he:
         logging.error(f"Erreur HTTP : {str(he)}")
-        return Response(json.dumps({'error': 'Erreur lors de la demande d\'offre', 'details': str(he)}),
-                        content_type='application/json'), 500
+        return jsonify({'error': 'Erreur lors de la demande d\'offre', 'details': str(he)}), 500
 
     except Exception as e:
         logging.error(f"Erreur lors de la demande d'offre : {str(e)}")
-        return Response(json.dumps({'error': 'Erreur interne du serveur'}), content_type='application/json'), 500
+        return jsonify({'error': 'Erreur interne du serveur'}), 500
 
 
+# Endpoint pour obtenir l'offre de justif d'idd
+@app.route('/show_qr_code', methods=['GET'])
+def show_qr_code():
+    try:
+        # Génére l'URI de l'offre de justif d'idd
+        credential_offer_uri = generate_credential_offer_uri()
+
+        # Config du code QR
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(credential_offer_uri)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        image_stream = BytesIO()
+        img.save(image_stream)
+        image_stream.seek(0)
+
+        # Renvoi en PNG
+        return send_file(image_stream, mimetype='img_qrcode/png')
+
+    except requests.exceptions.RequestException as re:
+        return jsonify({'error': 'Erreur de réseau', 'details': str(re)}), 500
+
+    except requests.exceptions.HTTPError as he:
+        return jsonify({'error': 'Erreur lors de la demande d\'offre', 'details': str(he)}), 500
+
+    except Exception as e:
+        return jsonify({'error': 'Erreur interne du serveur'}), 500
 
 ##---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
