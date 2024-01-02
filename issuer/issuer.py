@@ -120,7 +120,8 @@ def token_endpoint():
 
         # Valide le type de subvention
         if grant_type != 'urn:ietf:params:oauth:grant-type:pre-authorized_code':
-            return jsonify({'error': 'Type de subvention non pris en charge'}), 400
+            error_response = {'error': 'Type de subvention non pris en charge'}
+            return Response(json.dumps(error_response), content_type='application/json'), 400
 
         # Valide pre auth et retourne le token 
         access_token = validate_pre_authorized_code(client_id, client_secret, pre_authorized_code, redirect_uri)
@@ -136,19 +137,22 @@ def token_endpoint():
         return response
 
     except ValueError as ve:
-        response = Response(json.dumps({'error': str(ve)}), content_type='application/json')
+        error_response = {'error': str(ve)}
+        response = Response(json.dumps(error_response), content_type='application/json')
         response.status_code = 401
         return response
 
     except requests.exceptions.RequestException as re:
         logging.error(f"Erreur de réseau : {str(re)}")
-        response = Response(json.dumps({'error': 'Erreur de réseau'}), content_type='application/json')
+        error_response = {'error': 'Erreur de réseau'}
+        response = Response(json.dumps(error_response), content_type='application/json')
         response.status_code = 500
         return response
 
     except Exception as e:
         logging.error(f"Erreur dans le point de terminaison /token : {str(e)}")
-        response = Response(json.dumps({'error': 'Erreur interne du serveur'}), content_type='application/json')
+        error_response = {'error': 'Erreur interne du serveur'}
+        response = Response(json.dumps(error_response), content_type='application/json')
         response.status_code = 500
         return response
 
