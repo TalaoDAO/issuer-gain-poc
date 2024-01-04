@@ -5,7 +5,6 @@ import logging
 import math
 import os
 from datetime import datetime
-import qrcode
 import requests
 from flask import Flask, Response, request, jsonify
 from jwcrypto import jwk, jwt
@@ -18,8 +17,24 @@ app = Flask(__name__)
 
 # red = redis.Redis(host='localhost', port=6379, db=0)
 # app.config['SESSION_TYPE'] = 'redis'
+# app.config['SESSION_TYPE'] = 'filesystem'
 
-app.config['SESSION_TYPE'] = 'filesystem'
+#key.json
+# Ajoutez cette fonction pour charger la clé depuis key.json
+def load_key_from_file(file_path):
+    with open(file_path, 'r') as file:
+        return json.load(file)
+
+# Charge la clé depuis le fichier key.json
+key_path = '/chemin/vers/le/fichier/key.json'
+key_data = load_key_from_file(key_path)
+
+# Récupére la clé privée depuis key_data
+issuer_private_key = key_data.get('issuer_private_key', {})
+
+app.config['ISSUER_PRIVATE_KEY'] = issuer_private_key
+
+
 
 # Endpoint well-known/credential_issuer_config
 @app.route('/.well-known/credential_issuer_config', methods=['GET'])
@@ -196,7 +211,12 @@ def sign_sd_jwt(unsecured, issuer_key, issuer, subject_key):
     signer_key = jwk.JWK(**issuer_key)
     pub_key = json.loads(signer_key.export(private_key=False))
     pub_key['kid'] = signer_key.thumbprint()
-        
+
+    #add key.json
+    issuer_key = app.config['ISSUER_PRIVATE_KEY']
+    signer_key = jwk.JWK(**issuer_key)
+    # 
+       
     header = {
         'typ': "vc+sd-jwt",
         'kid': pub_key['kid'],
@@ -230,86 +250,48 @@ def hash(text):
 
 #-------------------------------------------------------------------------------------------------  
 
-# Génére l'URI de l'offre de justif d'identité
-def generate_credential_offer_uri():
-    offer_endpoint = "https://trial.authlete.net/api/offer/issue"
-    request_params = {
+# Genere l'offre d'info d'idd
+def generate_credential_offer():
+    # Génération dynamique de issuer_state et pre-authorized_code
+    issuer_state = token_urlsafe(16)  # Chaîne aléatoire d'une longueur de 16 caractères
+    pre_authorized_code = token_urlsafe(32)  # Chaîne aléatoire d'une longueur de 32 caractères
+    expiration_time = datetime.now() + timedelta(minutes=10)  # Valable 10 min
+
+    credential_offer = {
+        "credential_issuer": "https://talao.co/issuer/npwsshblrm",
         "credentials": ["IdentityCredential"],
-        "grants": {"urn:ietf:params:oauth:grant-type:pre-authorized_code": {}}
+        "grants": {
+            "authorization_code": {
+                "issuer_state": issuer_state
+            },
+            "urn:ietf:params:oauth:grant-type:pre-authorized_code": {
+                "pre-authorized_code": pre_authorized_code,
+                "user_pin_required": True,
+                "expiration_time": expiration_time.isoformat()
+            }
+        }
     }
+    return credential_offer
 
-    response = requests.post(offer_endpoint, json=request_params)
-    response.raise_for_status()
-    offer_data = response.json()
-    credential_offer_uri = offer_data.get("credentialOfferUri")
 
-    return credential_offer_uri
-
-##Partie API @ https://trial.authlete.net/api/offer/issue
-# Endpoint pour obtenir l'offre de justif d'idd
+# Endpoint pour obtenir l'offre d'info d'idd
 @app.route('/get_credential_offer', methods=['GET'])
 def get_credential_offer():
     try:
-        # URL de l'endpoint 
-        offer_endpoint = "https://trial.authlete.net/api/offer/issue"
+        # Génére l'offre d'info d'idd
+        credential_offer = generate_credential_offer()
 
-        print("Requesting credential offer")
-
-        # Param de la requête
-        request_params = {
-            "credentials": ["IdentityCredential"],
-            "grants": {"urn:ietf:params:oauth:grant-type:pre-authorized_code": {}}
-        }
-
-        # Envoi de la requête POST pour obtenir l'offre
-        response = requests.post(offer_endpoint, json=request_params)
-        response.raise_for_status()
-        
-        offer_data = response.json()
-        credential_offer_uri = offer_data.get("credentialOfferUri")
-
-        # Recup des données de l'URI
-        uri_data = urlparse(credential_offer_uri)
-        query_params = parse_qs(uri_data.query)
-        pre_authorized_code = query_params.get('credential_offer_uri', [''])[0]
-
-        # Génére un SD-JWT à partir de l'URI
-        unsecured = {"vct": "https://credentials.example.com/identity_credential"}
-        issuer_key = {"kty": "EC", "crv": "P-256", "x": "your_x", "y": "your_y"}
-        issuer = "your_issuer"
-        subject_key = {"kty": "EC", "crv": "P-256", "x": "subject_x", "y": "subject_y"}
-        signed_sd_jwt = sign_sd_jwt(unsecured, issuer_key, issuer, subject_key)
-
-        # Génére un QRcode à partir du SD-JWT
-        qr = qrcode.QRCode(
-            version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_L,
-            box_size=10,
-            border=4,
-        )
-        qr.add_data(signed_sd_jwt)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
-        img.save("./img_qrcode/credential_offer_qr.png")
-
-        return Response(json.dumps({'success': True, 'credential_offer_uri': credential_offer_uri,
-                                    'pre_authorized_code': pre_authorized_code}),
-                        content_type='application/json')
-
-    except requests.exceptions.RequestException as re:
-        logging.error(f"Erreur de réseau : {str(re)}")
-        return Response(json.dumps({'error': 'Erreur de réseau', 'details': str(re)}), content_type='application/json'), 500
-
-    except requests.exceptions.HTTPError as he:
-        logging.error(f"Erreur HTTP : {str(he)}")
-        return Response(json.dumps({'error': 'Erreur lors de la demande d\'offre', 'details': str(he)}),
-                        content_type='application/json'), 500
+        # Envoie l'offre d'info d'idd
+        response = Response(json.dumps({'credential_offer': credential_offer}), content_type='application/json')
+        return response
 
     except Exception as e:
-        logging.error(f"Erreur lors de la demande d'offre : {str(e)}")
-        return Response(json.dumps({'error': 'Erreur interne du serveur'}), content_type='application/json'), 500
+        logging.error(f"Erreur lors de la génération de l'offre d'informations d'identification : {str(e)}")
+        response = Response(json.dumps({'error': 'Erreur interne du serveur'}), content_type='application/json')
+        response.status_code = 500
+        return response
 
-
+    
 
 ##---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
