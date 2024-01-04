@@ -8,6 +8,7 @@ from datetime import datetime
 import requests
 from flask import Flask, Response, request, jsonify
 from jwcrypto import jwk, jwt
+from secrets import token_urlsafe
 
 
 logging.basicConfig(level=logging.INFO)
@@ -20,20 +21,20 @@ app = Flask(__name__)
 # app.config['SESSION_TYPE'] = 'filesystem'
 
 #key.json
-# Ajoutez cette fonction pour charger la clé depuis key.json
-def load_key_from_file(file_path):
-    with open(file_path, 'r') as file:
-        return json.load(file)
+    # Ajoutez cette fonction pour charger la clé depuis key.json
+    def load_key_from_file(file_path):
+        with open(file_path, 'r') as file:
+            return json.load(file)
 
-# Charge la clé depuis le fichier key.json
-key_path = '/chemin/vers/le/fichier/key.json'
-key_data = load_key_from_file(key_path)
+    # Charge la clé depuis le fichier key.json
+    key_path = '/chemin/vers/le/fichier/key.json'
+    key_data = load_key_from_file(key_path)
 
-# Récupére la clé privée depuis key_data
-issuer_private_key = key_data.get('issuer_private_key', {})
+    # Récupére la clé privée depuis key_data
+    issuer_private_key = key_data.get('issuer_private_key', {})
 
-app.config['ISSUER_PRIVATE_KEY'] = issuer_private_key
-
+    app.config['ISSUER_PRIVATE_KEY'] = issuer_private_key
+#
 
 
 # Endpoint well-known/credential_issuer_config
